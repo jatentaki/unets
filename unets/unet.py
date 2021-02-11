@@ -1,5 +1,6 @@
 import torch, itertools, functools
 import torch.nn as nn
+from dataclasses import dataclass
 
 from torch.utils.checkpoint import checkpoint
 from torch_dimcheck import dimchecked
@@ -31,6 +32,11 @@ thin_setup = {
     'padding': False,
     'bias': True
 }
+
+@dataclass
+class Features:
+    down: torch.Tensor
+    up  : torch.Tensor
 
 def checkpointed(cls):
     assert issubclass(cls, torch.nn.Module)
@@ -106,3 +112,22 @@ class Unet(nn.Module):
             f_bot = layer(f_bot, f_hor)
 
         return f_bot
+
+    @dimchecked
+    def extract_features(self, inp: ['b', 'fi', 'hi', 'wi']):
+        if inp.size(1) != self.in_features:
+            fmt = "Expected {} feature channels in input, got {}"
+            msg = fmt.format(self.in_features, inp.size(1))
+            raise ValueError(msg)
+
+        features_down = [inp]
+        for i, layer in enumerate(self.path_down):
+            features_down.append(layer(features_down[-1]))
+
+        features_up = [features_down[-1]]
+        features_horizontal = features_down[-2::-1]
+
+        for layer, f_hor in zip(self.path_up, features_horizontal):
+            features_up.append(layer(features_up[-1], f_hor))
+
+        return Features(features_down[1:], features_up)
